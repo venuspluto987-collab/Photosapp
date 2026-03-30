@@ -17,13 +17,11 @@ if uploaded_file:
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("✍️ Draw directly on image")
-
         canvas = st_canvas(
             fill_color="rgba(255, 0, 0, 0.4)",
             stroke_width=20,
             stroke_color="red",
-            background_image=image,  # ✅ THIS IS KEY
+            background_image=image,  # ✅ THIS WORKS ONLY HERE
             update_streamlit=True,
             height=image.height,
             width=image.width,
@@ -33,20 +31,15 @@ if uploaded_file:
 
     if st.button("🚀 Apply"):
         if canvas.image_data is not None:
-
             mask = canvas.image_data[:, :, 3]
             mask = (mask > 0).astype(np.uint8) * 255
 
             result = cv2.inpaint(img_np, mask, 3, cv2.INPAINT_TELEA)
 
             with col2:
-                st.subheader("✅ Result")
                 st.image(result)
 
             buf = io.BytesIO()
             Image.fromarray(result).save(buf, format="PNG")
 
-            st.download_button("📥 Download", buf.getvalue(), "output.png")
-
-else:
-    st.info("Upload image to start")
+            st.download_button("Download", buf.getvalue(), "output.png")
