@@ -5,10 +5,9 @@ import io
 
 st.set_page_config(page_title="AI Image Tool", layout="wide")
 
-st.title("✨ AI Image Tool (Pro)")
-st.caption("Erase • Draw Delete • Enhance")
+st.title("✨ AI Image Tool (Drag Object Delete)")
 
-uploaded_file = st.file_uploader("📤 Upload Image", type=["png", "jpg", "jpeg"])
+uploaded_file = st.file_uploader("Upload Image", type=["png","jpg","jpeg"])
 
 if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
@@ -17,94 +16,86 @@ if uploaded_file:
     col1, col2 = st.columns(2)
 
     with col1:
-        st.image(image, caption="📸 Original")
+        st.image(image, caption="Original")
 
-    tool = st.sidebar.radio("Choose Tool", ["🎯 Brush Erase", "📦 Object Delete", "✨ Enhance"])
+    tool = st.sidebar.radio("Tool", ["Draw & Delete", "Enhance"])
 
     # =========================
-    # 🎯 BRUSH ERASE
+    # 🎯 DRAW + DELETE
     # =========================
-    if tool == "🎯 Brush Erase":
+    if tool == "Draw & Delete":
+
+        from streamlit_drawable_canvas import st_canvas
         import cv2
 
-        brush = st.sidebar.slider("Brush Size", 5, 50, 20)
+        st.write("✍️ Drag on the image to select object")
 
-        if "mask" not in st.session_state:
-            st.session_state.mask = np.zeros((image.height, image.width), dtype=np.uint8)
+        # resize for canvas safety
+        display_image = image.copy()
+        display_image.thumbnail((600, 600))
 
-        x = st.sidebar.number_input("X", 0, image.width - 1, image.width // 2)
-        y = st.sidebar.number_input("Y", 0, image.height - 1, image.height // 2)
+        canvas = st_canvas(
+            fill_color="rgba(255, 0, 0, 0.3)",
+            stroke_width=5,
+            background_color="white",   # ⚠️ NOT using background_image
+            height=display_image.height,
+            width=display_image.width,
+            drawing_mode="rect",  # drag rectangle
+            key="canvas",
+        )
 
-        if st.sidebar.button("➕ Add Point"):
-            cv2.circle(st.session_state.mask, (x, y), brush, 255, -1)
+        # show image separately
+        st.image(display_image, caption="Draw box above this image")
 
-        if st.sidebar.button("🧹 Reset Mask"):
-            st.session_state.mask = np.zeros((image.height, image.width), dtype=np.uint8)
+        if canvas.json_data is not None:
+            objects = canvas.json_data["objects"]
 
-        # overlay preview
-        overlay = img_np.copy()
-        mask = st.session_state.mask > 0
-        overlay[mask] = (overlay[mask]*0.5 + np.array([255,0,0])*0.5).astype(np.uint8)
+            if len(objects) > 0:
+                obj = objects[-1]
 
-        st.image(overlay, caption="🔴 Brush Area")
+                left = int(obj["left"])
+                top = int(obj["top"])
+                width = int(obj["width"])
+                height = int(obj["height"])
 
-        if st.button("🚀 Apply Erase"):
-            result = cv2.inpaint(img_np, st.session_state.mask, 3, cv2.INPAINT_TELEA)
+                # scale to original image
+                scale_x = image.width / display_image.width
+                scale_y = image.height / display_image.height
 
-            with col2:
-                st.image(result, caption="✅ Result")
+                x1 = int(left * scale_x)
+                y1 = int(top * scale_y)
+                x2 = int((left + width) * scale_x)
+                y2 = int((top + height) * scale_y)
 
-    # =========================
-    # 📦 OBJECT DELETE (NEW)
-    # =========================
-    elif tool == "📦 Object Delete":
-        import cv2
+                # create mask
+                mask = np.zeros((image.height, image.width), dtype=np.uint8)
+                mask[y1:y2, x1:x2] = 255
 
-        st.sidebar.subheader("Draw Object Box")
+                # preview overlay
+                overlay = img_np.copy()
+                overlay[mask > 0] = (overlay[mask > 0]*0.5 + np.array([255,0,0])*0.5).astype(np.uint8)
 
-        x1 = st.sidebar.number_input("Start X", 0, image.width-1, 50)
-        y1 = st.sidebar.number_input("Start Y", 0, image.height-1, 50)
-        x2 = st.sidebar.number_input("End X", 0, image.width-1, 200)
-        y2 = st.sidebar.number_input("End Y", 0, image.height-1, 200)
+                st.image(overlay, caption="Selected Area")
 
-        # create mask
-        mask = np.zeros((image.height, image.width), dtype=np.uint8)
-        mask[y1:y2, x1:x2] = 255
+                if st.button("🚀 Delete Object"):
+                    result = cv2.inpaint(img_np, mask, 3, cv2.INPAINT_TELEA)
 
-        # overlay preview
-        overlay = img_np.copy()
-        overlay[mask > 0] = (overlay[mask > 0]*0.5 + np.array([255,0,0])*0.5).astype(np.uint8)
+                    with col2:
+                        st.image(result, caption="Result")
 
-        st.image(overlay, caption="🔴 Selected Object Area")
+                    buf = io.BytesIO()
+                    Image.fromarray(result).save(buf, format="PNG")
 
-        if st.button("🚀 Delete Object"):
-            result = cv2.inpaint(img_np, mask, 3, cv2.INPAINT_TELEA)
-
-            with col2:
-                st.image(result, caption="✅ Object Removed")
-
-            buf = io.BytesIO()
-            Image.fromarray(result).save(buf, format="PNG")
-
-            st.download_button("📥 Download", buf.getvalue(), "object_removed.png")
+                    st.download_button("Download", buf.getvalue(), "output.png")
 
     # =========================
     # ✨ ENHANCE
     # =========================
-    elif tool == "✨ Enhance":
-        strength = st.sidebar.slider("Sharpness", 1, 5, 2)
+    elif tool == "Enhance":
+        from PIL import ImageFilter
 
-        if st.button("🚀 Enhance"):
-            from PIL import ImageFilter
-
-            result = image
-            for _ in range(strength):
-                result = result.filter(ImageFilter.SHARPEN)
+        if st.button("Enhance"):
+            result = image.filter(ImageFilter.SHARPEN)
 
             with col2:
-                st.image(result, caption="✨ Enhanced")
-
-else:
-    st.info("👈 Upload an image to start")
-
-       
+                st.image(result)
