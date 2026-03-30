@@ -1,12 +1,12 @@
 import streamlit as st
 import numpy as np
 from PIL import Image
-import base64
 import io
 import cv2
+from streamlit_drawable_canvas import st_canvas
 
 st.set_page_config(layout="wide")
-st.title("🔥 AI Object Remover (Pro UI)")
+st.title("🔥 AI Object Remover (Draw & Delete)")
 
 uploaded_file = st.file_uploader("Upload Image", type=["png","jpg","jpeg"])
 
@@ -14,76 +14,68 @@ if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
     img_np = np.array(image)
 
-    # convert image to base64
-    buffered = io.BytesIO()
-    image.save(buffered, format="PNG")
-    img_str = base64.b64encode(buffered.getvalue()).decode()
+    col1, col2 = st.columns(2)
 
-    st.markdown("### ✍️ Draw on image to remove object")
+    with col1:
+        st.image(image, caption="Original")
 
-    canvas_html = f"""
-    <canvas id="canvas"></canvas>
+    st.markdown("### ✍️ Draw on the image to remove object")
 
-    <script>
-    const canvas = document.getElementById("canvas");
-    const ctx = canvas.getContext("2d");
+    # Resize for safe canvas rendering
+    display_image = image.copy()
+    display_image.thumbnail((700, 700))
 
-    const img = new Image();
-    img.src = "data:image/png;base64,{img_str}";
+    # Canvas (DRAW DIRECTLY ON IMAGE ✅)
+    canvas = st_canvas(
+        fill_color="rgba(255, 0, 0, 0.4)",
+        stroke_width=20,
+        stroke_color="rgba(255,0,0,1)",
+        background_image=display_image,   # ✅ WORKING HERE
+        update_streamlit=True,
+        height=display_image.height,
+        width=display_image.width,
+        drawing_mode="freedraw",          # 🖌️ freehand drawing
+        key="canvas",
+    )
 
-    img.onload = function() {{
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
-    }}
+    # =========================
+    # CAPTURE MASK (FIXED)
+    # =========================
+    if st.button("📸 Capture Selection"):
+        if canvas.image_data is not None:
 
-    let drawing = false;
+            # extract mask from alpha channel
+            mask = canvas.image_data[:, :, 3]
 
-    canvas.addEventListener("mousedown", () => drawing = true);
-    canvas.addEventListener("mouseup", () => drawing = false);
-    canvas.addEventListener("mousemove", draw);
+            # convert to binary mask
+            mask = (mask > 0).astype(np.uint8) * 255
 
-    function draw(e) {{
-        if (!drawing) return;
-        ctx.fillStyle = "rgba(255,0,0,0.4)";
-        ctx.beginPath();
-        ctx.arc(e.offsetX, e.offsetY, 10, 0, Math.PI * 2);
-        ctx.fill();
-    }}
+            # resize mask to original image size
+            mask = cv2.resize(mask, (image.width, image.height))
 
-    function sendMask() {{
-        const dataURL = canvas.toDataURL();
-        window.parent.postMessage({{
-            type: "mask",
-            data: dataURL
-        }}, "*");
-    }}
-    </script>
+            st.success("Selection captured!")
 
-    <button onclick="sendMask()">Send Selection</button>
-    """
+            # preview mask
+            st.image(mask, caption="Mask")
 
-    mask_data = st.components.v1.html(canvas_html, height=600)
+            # =========================
+            # APPLY ERASE
+            # =========================
+            if st.button("🚀 Remove Object"):
+                result = cv2.inpaint(
+                    img_np,
+                    mask,
+                    3,
+                    cv2.INPAINT_TELEA
+                )
 
-    st.info("After drawing → Click 'Send Selection'")
+                with col2:
+                    st.image(result, caption="Result")
 
-    # NOTE: Streamlit can't directly capture postMessage easily,
-    # so we simulate via re-upload
+                buf = io.BytesIO()
+                Image.fromarray(result).save(buf, format="PNG")
 
-    mask_file = st.file_uploader("Upload drawn mask (auto soon)")
+                st.download_button("📥 Download", buf.getvalue(), "output.png")
 
-    if mask_file:
-        mask_img = Image.open(mask_file).convert("L")
-        mask_np = np.array(mask_img)
-
-        _, mask_bin = cv2.threshold(mask_np, 10, 255, cv2.THRESH_BINARY)
-
-        if st.button("🚀 Remove Object"):
-            result = cv2.inpaint(img_np, mask_bin, 3, cv2.INPAINT_TELEA)
-
-            st.image(result)
-
-            buf = io.BytesIO()
-            Image.fromarray(result).save(buf, format="PNG")
-
-            st.download_button("Download", buf.getvalue(), "output.png")
+else:
+    st.info("Upload image to start")
