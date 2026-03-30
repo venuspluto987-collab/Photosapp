@@ -6,7 +6,7 @@ import io
 import cv2
 
 st.set_page_config(layout="wide")
-st.title("🔥 AI Object Remover (Draw → Apply)")
+st.title("🔥 AI Object Remover (Working Draw + Apply)")
 
 uploaded_file = st.file_uploader("Upload Image", type=["png","jpg","jpeg"])
 
@@ -22,12 +22,12 @@ if uploaded_file:
     st.markdown("### ✍️ Draw on image → Click Apply")
 
     # =========================
-    # HTML CANVAS WITH AUTO EXPORT
+    # HTML WITH RETURN VALUE
     # =========================
     canvas_html = f"""
     <canvas id="canvas"></canvas>
-    <br>
-    <button onclick="sendMask()">Apply</button>
+    <br><br>
+    <button onclick="sendData()">Apply</button>
 
     <script>
     const canvas = document.getElementById("canvas");
@@ -50,50 +50,40 @@ if uploaded_file:
 
     function draw(e) {{
         if (!drawing) return;
-        ctx.fillStyle = "rgba(255,0,0,0.4)";
+        ctx.fillStyle = "rgba(255,0,0,0.5)";
         ctx.beginPath();
         ctx.arc(e.offsetX, e.offsetY, 15, 0, Math.PI * 2);
         ctx.fill();
     }}
 
-    function sendMask() {{
+    function sendData() {{
         const dataURL = canvas.toDataURL("image/png");
-
-        const input = document.createElement("input");
-        input.type = "hidden";
-        input.name = "mask_data";
-        input.value = dataURL;
-
-        const form = document.createElement("form");
-        form.method = "POST";
-        form.appendChild(input);
-        document.body.appendChild(form);
-        form.submit();
+        window.parent.postMessage({{
+            isStreamlitMessage: true,
+            type: "streamlit:setComponentValue",
+            value: dataURL
+        }}, "*");
     }}
     </script>
     """
 
-    st.components.v1.html(canvas_html, height=600)
+    # ✅ THIS RETURNS VALUE
+    mask_data = st.components.v1.html(canvas_html, height=600)
 
     # =========================
-    # CAPTURE MASK FROM QUERY PARAMS
+    # PROCESS MASK
     # =========================
-    query_params = st.query_params
+    if mask_data:
+        st.success("✅ Selection received!")
 
-    if "mask_data" in query_params:
-        mask_base64 = query_params["mask_data"]
-
-        # remove header
-        mask_base64 = mask_base64.split(",")[1]
-
+        # decode base64
+        mask_base64 = mask_data.split(",")[1]
         mask_bytes = base64.b64decode(mask_base64)
         mask_img = Image.open(io.BytesIO(mask_bytes)).convert("L")
 
         mask_np = np.array(mask_img)
 
         _, mask_bin = cv2.threshold(mask_np, 10, 255, cv2.THRESH_BINARY)
-
-        st.success("Mask captured!")
 
         # =========================
         # APPLY REMOVE
