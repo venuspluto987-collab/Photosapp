@@ -1,11 +1,12 @@
 import streamlit as st
 import numpy as np
 from PIL import Image
+import base64
 import io
+import cv2
 
-st.set_page_config(page_title="AI Image Tool", layout="wide")
-
-st.title("✨ AI Image Tool (Drag Object Delete)")
+st.set_page_config(layout="wide")
+st.title("🔥 AI Object Remover (Pro UI)")
 
 uploaded_file = st.file_uploader("Upload Image", type=["png","jpg","jpeg"])
 
@@ -13,89 +14,76 @@ if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
     img_np = np.array(image)
 
-    col1, col2 = st.columns(2)
+    # convert image to base64
+    buffered = io.BytesIO()
+    image.save(buffered, format="PNG")
+    img_str = base64.b64encode(buffered.getvalue()).decode()
 
-    with col1:
-        st.image(image, caption="Original")
+    st.markdown("### ✍️ Draw on image to remove object")
 
-    tool = st.sidebar.radio("Tool", ["Draw & Delete", "Enhance"])
+    canvas_html = f"""
+    <canvas id="canvas"></canvas>
 
-    # =========================
-    # 🎯 DRAW + DELETE
-    # =========================
-    if tool == "Draw & Delete":
+    <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
 
-        from streamlit_drawable_canvas import st_canvas
-        import cv2
+    const img = new Image();
+    img.src = "data:image/png;base64,{img_str}";
 
-        st.write("✍️ Drag on the image to select object")
+    img.onload = function() {{
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+    }}
 
-        # resize for canvas safety
-        display_image = image.copy()
-        display_image.thumbnail((600, 600))
+    let drawing = false;
 
-        canvas = st_canvas(
-            fill_color="rgba(255, 0, 0, 0.3)",
-            stroke_width=5,
-            background_color="white",   # ⚠️ NOT using background_image
-            height=display_image.height,
-            width=display_image.width,
-            drawing_mode="rect",  # drag rectangle
-            key="canvas",
-        )
+    canvas.addEventListener("mousedown", () => drawing = true);
+    canvas.addEventListener("mouseup", () => drawing = false);
+    canvas.addEventListener("mousemove", draw);
 
-        # show image separately
-        st.image(display_image, caption="Draw box above this image")
+    function draw(e) {{
+        if (!drawing) return;
+        ctx.fillStyle = "rgba(255,0,0,0.4)";
+        ctx.beginPath();
+        ctx.arc(e.offsetX, e.offsetY, 10, 0, Math.PI * 2);
+        ctx.fill();
+    }}
 
-        if canvas.json_data is not None:
-            objects = canvas.json_data["objects"]
+    function sendMask() {{
+        const dataURL = canvas.toDataURL();
+        window.parent.postMessage({{
+            type: "mask",
+            data: dataURL
+        }}, "*");
+    }}
+    </script>
 
-            if len(objects) > 0:
-                obj = objects[-1]
+    <button onclick="sendMask()">Send Selection</button>
+    """
 
-                left = int(obj["left"])
-                top = int(obj["top"])
-                width = int(obj["width"])
-                height = int(obj["height"])
+    mask_data = st.components.v1.html(canvas_html, height=600)
 
-                # scale to original image
-                scale_x = image.width / display_image.width
-                scale_y = image.height / display_image.height
+    st.info("After drawing → Click 'Send Selection'")
 
-                x1 = int(left * scale_x)
-                y1 = int(top * scale_y)
-                x2 = int((left + width) * scale_x)
-                y2 = int((top + height) * scale_y)
+    # NOTE: Streamlit can't directly capture postMessage easily,
+    # so we simulate via re-upload
 
-                # create mask
-                mask = np.zeros((image.height, image.width), dtype=np.uint8)
-                mask[y1:y2, x1:x2] = 255
+    mask_file = st.file_uploader("Upload drawn mask (auto soon)")
 
-                # preview overlay
-                overlay = img_np.copy()
-                overlay[mask > 0] = (overlay[mask > 0]*0.5 + np.array([255,0,0])*0.5).astype(np.uint8)
+    if mask_file:
+        mask_img = Image.open(mask_file).convert("L")
+        mask_np = np.array(mask_img)
 
-                st.image(overlay, caption="Selected Area")
+        _, mask_bin = cv2.threshold(mask_np, 10, 255, cv2.THRESH_BINARY)
 
-                if st.button("🚀 Delete Object"):
-                    result = cv2.inpaint(img_np, mask, 3, cv2.INPAINT_TELEA)
+        if st.button("🚀 Remove Object"):
+            result = cv2.inpaint(img_np, mask_bin, 3, cv2.INPAINT_TELEA)
 
-                    with col2:
-                        st.image(result, caption="Result")
+            st.image(result)
 
-                    buf = io.BytesIO()
-                    Image.fromarray(result).save(buf, format="PNG")
+            buf = io.BytesIO()
+            Image.fromarray(result).save(buf, format="PNG")
 
-                    st.download_button("Download", buf.getvalue(), "output.png")
-
-    # =========================
-    # ✨ ENHANCE
-    # =========================
-    elif tool == "Enhance":
-        from PIL import ImageFilter
-
-        if st.button("Enhance"):
-            result = image.filter(ImageFilter.SHARPEN)
-
-            with col2:
-                st.image(result)
+            st.download_button("Download", buf.getvalue(), "output.png")
