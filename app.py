@@ -6,7 +6,7 @@ import cv2
 from streamlit_drawable_canvas import st_canvas
 
 st.set_page_config(layout="wide")
-st.title("🔥 AI Object Remover (Draw on Image)")
+st.title("🔥 Draw on Image → Remove Object")
 
 uploaded_file = st.file_uploader("Upload Image", type=["png","jpg","jpeg"])
 
@@ -17,13 +17,13 @@ if uploaded_file:
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("✍️ Draw on Image")
+        st.subheader("✍️ Draw directly on image")
 
         canvas = st_canvas(
             fill_color="rgba(255, 0, 0, 0.4)",
             stroke_width=20,
-            stroke_color="rgba(255,0,0,1)",
-            background_image=image,   # ✅ DIRECT DRAW ON IMAGE
+            stroke_color="red",
+            background_image=image,  # ✅ THIS IS KEY
             update_streamlit=True,
             height=image.height,
             width=image.width,
@@ -31,10 +31,7 @@ if uploaded_file:
             key="canvas",
         )
 
-    # =========================
-    # APPLY BUTTON
-    # =========================
-    if st.button("🚀 Apply Remove"):
+    if st.button("🚀 Apply"):
         if canvas.image_data is not None:
 
             mask = canvas.image_data[:, :, 3]
