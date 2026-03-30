@@ -1,11 +1,12 @@
 import streamlit as st
 import numpy as np
 from PIL import Image
+import base64
 import io
 import cv2
 
 st.set_page_config(layout="wide")
-st.title("🔥 Click to Remove Object")
+st.title("🔥 AI Object Remover (Draw → Apply)")
 
 uploaded_file = st.file_uploader("Upload Image", type=["png","jpg","jpeg"])
 
@@ -13,46 +14,95 @@ if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
     img_np = np.array(image)
 
-    col1, col2 = st.columns(2)
+    # convert image to base64
+    buffered = io.BytesIO()
+    image.save(buffered, format="PNG")
+    img_str = base64.b64encode(buffered.getvalue()).decode()
 
-    with col1:
-        st.image(image, caption="Click positions below")
+    st.markdown("### ✍️ Draw on image → Click Apply")
 
-    st.markdown("### 👉 Click on image to mark object")
+    # =========================
+    # HTML CANVAS WITH AUTO EXPORT
+    # =========================
+    canvas_html = f"""
+    <canvas id="canvas"></canvas>
+    <br>
+    <button onclick="sendMask()">Apply</button>
 
-    # store clicks
-    if "points" not in st.session_state:
-        st.session_state.points = []
+    <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
 
-    # simulate click input
-    x = st.number_input("X position", 0, image.width-1)
-    y = st.number_input("Y position", 0, image.height-1)
+    const img = new Image();
+    img.src = "data:image/png;base64,{img_str}";
 
-    if st.button("➕ Add Click"):
-        st.session_state.points.append((x, y))
+    img.onload = function() {{
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+    }}
 
-    if st.button("🧹 Reset"):
-        st.session_state.points = []
+    let drawing = false;
 
-    # create mask
-    mask = np.zeros((image.height, image.width), dtype=np.uint8)
+    canvas.addEventListener("mousedown", () => drawing = true);
+    canvas.addEventListener("mouseup", () => drawing = false);
+    canvas.addEventListener("mousemove", draw);
 
-    for (px, py) in st.session_state.points:
-        cv2.circle(mask, (px, py), 25, 255, -1)
+    function draw(e) {{
+        if (!drawing) return;
+        ctx.fillStyle = "rgba(255,0,0,0.4)";
+        ctx.beginPath();
+        ctx.arc(e.offsetX, e.offsetY, 15, 0, Math.PI * 2);
+        ctx.fill();
+    }}
 
-    # overlay preview
-    overlay = img_np.copy()
-    overlay[mask > 0] = (overlay[mask > 0]*0.5 + np.array([255,0,0])*0.5).astype(np.uint8)
+    function sendMask() {{
+        const dataURL = canvas.toDataURL("image/png");
 
-    st.image(overlay, caption="Selected Area")
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "mask_data";
+        input.value = dataURL;
 
-    if st.button("🚀 Remove Object"):
-        result = cv2.inpaint(img_np, mask, 3, cv2.INPAINT_TELEA)
+        const form = document.createElement("form");
+        form.method = "POST";
+        form.appendChild(input);
+        document.body.appendChild(form);
+        form.submit();
+    }}
+    </script>
+    """
 
-        with col2:
-            st.image(result, caption="Result")
+    st.components.v1.html(canvas_html, height=600)
+
+    # =========================
+    # CAPTURE MASK FROM QUERY PARAMS
+    # =========================
+    query_params = st.query_params
+
+    if "mask_data" in query_params:
+        mask_base64 = query_params["mask_data"]
+
+        # remove header
+        mask_base64 = mask_base64.split(",")[1]
+
+        mask_bytes = base64.b64decode(mask_base64)
+        mask_img = Image.open(io.BytesIO(mask_bytes)).convert("L")
+
+        mask_np = np.array(mask_img)
+
+        _, mask_bin = cv2.threshold(mask_np, 10, 255, cv2.THRESH_BINARY)
+
+        st.success("Mask captured!")
+
+        # =========================
+        # APPLY REMOVE
+        # =========================
+        result = cv2.inpaint(img_np, mask_bin, 3, cv2.INPAINT_TELEA)
+
+        st.image(result, caption="✅ Result")
 
         buf = io.BytesIO()
         Image.fromarray(result).save(buf, format="PNG")
 
-        st.download_button("Download", buf.getvalue(), "output.png")
+        st.download_button("📥 Download", buf.getvalue(), "output.png")
